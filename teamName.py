@@ -2,15 +2,45 @@ import numpy as np
 
 nInst = 51
 
-# correlated trio: BLBT, MHRM, EAFC (columns in prices.txt)
-TRIO = [41, 49, 50]
+# correlated baskets (column indices in prices.txt)
+BASKETS = [
+    [41, 49, 50],   # BLBT, MHRM, EAFC
+    [9, 38],        # DUCT, HRND
+    [1, 20],        # AENO, NWIG
+    [10, 46],       # SMAH, ILVX
+    [13, 45],       # EORC, NGTE
+    [8, 27],        # HUXZ, ACAC
+    [31, 43],       # ACIX, ITPA
+]
 
-LOOKBACK = 40
+LOOKBACK = 36
 ENTRY_Z = 1.0
-EXIT_Z = 0.25
+EXIT_Z = 0.2
 DLR_POS_LIMIT = 10_000
 
 currentPos = np.zeros(nInst, dtype=int)
+
+
+def _trade_basket(prcSoFar, basket, pos):
+    """Update positions for one correlated basket via z-score mean reversion."""
+    logP = np.log(prcSoFar[basket, -LOOKBACK:])
+    demeaned = logP - logP.mean(axis=1, keepdims=True)
+    spread = demeaned - demeaned.mean(axis=0, keepdims=True)
+
+    mu = spread.mean(axis=1)
+    sd = spread.std(axis=1)
+    sd[sd < 1e-8] = 1e-8
+    z = (spread[:, -1] - mu) / sd
+
+    for k, inst in enumerate(basket):
+        maxShares = int(DLR_POS_LIMIT / prcSoFar[inst, -1])
+        if z[k] > ENTRY_Z:
+            pos[inst] = -maxShares  # rich vs basket -> short
+        elif z[k] < -ENTRY_Z:
+            pos[inst] = maxShares  # cheap vs basket -> long
+        elif abs(z[k]) < EXIT_Z:
+            pos[inst] = 0
+        # otherwise hold existing position to avoid churn
 
 
 def getMyPosition(prcSoFar):
@@ -20,30 +50,9 @@ def getMyPosition(prcSoFar):
     if nt < LOOKBACK + 1:
         return np.zeros(nins, dtype=int)
 
-    # log prices of the trio over the lookback window
-    logP = np.log(prcSoFar[TRIO, -LOOKBACK:])
-
-    # normalize each series by its own rolling mean level so they're comparable,
-    # then measure each one against the trio's average
-    demeaned = logP - logP.mean(axis=1, keepdims=True)
-    spread = demeaned - demeaned.mean(axis=0, keepdims=True)
-
-    mu = spread.mean(axis=1)
-    sd = spread.std(axis=1)
-    sd[sd < 1e-8] = 1e-8
-    z = (spread[:, -1] - mu) / sd
-
     newPos = currentPos.copy()
-    for k, inst in enumerate(TRIO):
-        price = prcSoFar[inst, -1]
-        maxShares = int(DLR_POS_LIMIT / price)
-        if z[k] > ENTRY_Z:
-            newPos[inst] = -maxShares  # rich vs basket -> short
-        elif z[k] < -ENTRY_Z:
-            newPos[inst] = maxShares  # cheap vs basket -> long
-        elif abs(z[k]) < EXIT_Z:
-            newPos[inst] = 0
-        # otherwise hold the existing position to avoid churn
+    for basket in BASKETS:
+        _trade_basket(prcSoFar, basket, newPos)
 
     currentPos = newPos
     return currentPos
