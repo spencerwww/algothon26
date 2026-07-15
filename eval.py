@@ -6,7 +6,7 @@ Participants: write getMyPosition(prcSoFar) in teamName.py and update the import
 
 import numpy as np
 import pandas as pd
-from algo_bollinger.bollinger import getMyPosition as getPosition
+from guers import getMyPosition as getPosition
 
 nInst = 0
 nt = 0
